@@ -446,25 +446,25 @@ private:
 		SCREEN_SPACE_REFLECTION_MAX,
 	};
 
-	struct ScreenSpaceReflectionPushConstant {
-		float proj_info[4]; // 16 - 16
+        struct ScreenSpaceReflectionPushConstant {
+                float proj_info[4]; // 16 - 16
 
-		int32_t screen_size[2]; //  8 - 24
-		float camera_z_near; //  4 - 28
-		float camera_z_far; //  4 - 32
+                int32_t screen_size[2]; //  8 - 24
+                float camera_z_near; //  4 - 28
+                float camera_z_far; //  4 - 32
 
-		int32_t num_steps; //  4 - 36
-		float depth_tolerance; //  4 - 40
-		float distance_fade; //  4 - 44
-		float curve_fade_in; //  4 - 48
+                int32_t num_steps; //  4 - 36
+                float depth_tolerance; //  4 - 40
+                float distance_fade; //  4 - 44
+                float curve_fade_in; //  4 - 48
 
-		uint32_t orthogonal; //  4 - 52
-		float filter_mipmap_levels; //  4 - 56
-		uint32_t use_half_res; //  4 - 60
-		uint32_t view_index; //  4 - 64
+                uint32_t orthogonal; //  4 - 52
+                uint32_t use_half_res; //  4 - 56
+                uint32_t view_index; //  4 - 60
+                uint32_t pad1; //  4 - 64
 
-		// float projection[16];			// this is in our ScreenSpaceReflectionSceneData now
-	};
+                // float projection[16];                        // this is in our ScreenSpaceReflectionSceneData now
+        };
 
 	struct ScreenSpaceReflection {
 		ScreenSpaceReflectionShaderRD shader;

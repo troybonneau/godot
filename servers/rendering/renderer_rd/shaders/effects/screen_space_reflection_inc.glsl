@@ -19,10 +19,10 @@ vec3 reconstructCSPosition(vec2 screen_pos, float z) {
 
 		return pos.xyz;
 	} else {
-		if (params.orthogonal) {
-			return vec3(-(screen_pos.xy * params.proj_info.xy + params.proj_info.zw), z);
-		} else {
-			return vec3((screen_pos.xy * params.proj_info.xy + params.proj_info.zw) * z, z);
-		}
+                if (params.orthogonal != 0u) {
+                        return vec3(-(screen_pos.xy * params.proj_info.xy + params.proj_info.zw), z);
+                } else {
+                        return vec3((screen_pos.xy * params.proj_info.xy + params.proj_info.zw) * z, z);
+                }
 	}
 }
