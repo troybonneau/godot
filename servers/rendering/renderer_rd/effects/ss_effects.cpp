@@ -1402,9 +1402,11 @@ void SSEffects::screen_space_reflection(Ref<RenderSceneBuffersRD> p_render_buffe
 		pipeline_specialization |= SSR_MULTIVIEW;
 	}
 
-	RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
+        RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
 
-	for (uint32_t v = 0; v < view_count; v++) {
+        Size2i full_screen_size = p_render_buffers->get_internal_size();
+
+        for (uint32_t v = 0; v < view_count; v++) {
 		// get buffers we need to use for this view
 		RID diffuse_slice = p_render_buffers->get_internal_texture(v);
 		RID depth_slice = p_render_buffers->get_depth_texture(v);
@@ -1467,19 +1469,20 @@ void SSEffects::screen_space_reflection(Ref<RenderSceneBuffersRD> p_render_buffe
 			RD::get_singleton()->draw_command_begin_label("SSR main");
 
 			ScreenSpaceReflectionPushConstant push_constant;
-			push_constant.view_index = v;
-			push_constant.camera_z_far = p_projections[v].get_z_far();
-			push_constant.camera_z_near = p_projections[v].get_z_near();
-			push_constant.orthogonal = p_projections[v].is_orthogonal();
-			push_constant.screen_size[0] = p_ssr_buffers.size.x;
-			push_constant.screen_size[1] = p_ssr_buffers.size.y;
-			push_constant.curve_fade_in = p_fade_in;
-			push_constant.distance_fade = p_fade_out;
-			push_constant.num_steps = p_max_steps;
-			push_constant.depth_tolerance = p_tolerance;
-			push_constant.use_half_res = true;
-			push_constant.proj_info[0] = -2.0f / (p_ssr_buffers.size.width * p_projections[v].columns[0][0]);
-			push_constant.proj_info[1] = -2.0f / (p_ssr_buffers.size.height * p_projections[v].columns[1][1]);
+                        push_constant.view_index = v;
+                        push_constant.pad1 = 0;
+                        push_constant.camera_z_far = p_projections[v].get_z_far();
+                        push_constant.camera_z_near = p_projections[v].get_z_near();
+                        push_constant.orthogonal = p_projections[v].is_orthogonal();
+                        push_constant.screen_size[0] = full_screen_size.x;
+                        push_constant.screen_size[1] = full_screen_size.y;
+                        push_constant.curve_fade_in = p_fade_in;
+                        push_constant.distance_fade = p_fade_out;
+                        push_constant.num_steps = p_max_steps;
+                        push_constant.depth_tolerance = p_tolerance;
+                        push_constant.use_half_res = p_ssr_buffers.size != full_screen_size;
+                        push_constant.proj_info[0] = -2.0f / (full_screen_size.x * p_projections[v].columns[0][0]);
+                        push_constant.proj_info[1] = -2.0f / (full_screen_size.y * p_projections[v].columns[1][1]);
 			push_constant.proj_info[2] = (1.0f - p_projections[v].columns[0][2]) / p_projections[v].columns[0][0];
 			push_constant.proj_info[3] = (1.0f + p_projections[v].columns[1][2]) / p_projections[v].columns[1][1];
 

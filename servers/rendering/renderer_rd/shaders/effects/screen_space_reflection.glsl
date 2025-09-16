@@ -16,21 +16,21 @@ layout(rgba8, set = 2, binding = 0) uniform restrict readonly image2D source_nor
 layout(set = 3, binding = 0) uniform sampler2D source_metallic;
 
 layout(push_constant, std430) uniform Params {
-	vec4 proj_info;
+        vec4 proj_info;
 
-	ivec2 screen_size;
-	float camera_z_near;
-	float camera_z_far;
+        ivec2 screen_size;
+        float camera_z_near;
+        float camera_z_far;
 
-	int num_steps;
-	float depth_tolerance;
-	float distance_fade;
-	float curve_fade_in;
+        int num_steps;
+        float depth_tolerance;
+        float distance_fade;
+        float curve_fade_in;
 
-	bool orthogonal;
-	float filter_mipmap_levels;
-	bool use_half_res;
-	uint view_index;
+        uint orthogonal;
+        uint use_half_res;
+        uint view_index;
+        uint pad1;
 }
 params;
 
@@ -47,24 +47,32 @@ vec2 view_to_screen(vec3 view_pos, out float w) {
 #define M_PI 3.14159265359
 
 void main() {
-	// Pixel being shaded
-	ivec2 ssC = ivec2(gl_GlobalInvocationID.xy);
+        // Pixel being shaded
+        ivec2 ssC = ivec2(gl_GlobalInvocationID.xy);
 
-	if (any(greaterThanEqual(ssC.xy, params.screen_size))) { //too large, do nothing
-		return;
-	}
+        ivec2 full_screen_size_i = params.screen_size;
+        ivec2 ssr_screen_size_i = full_screen_size_i;
+        if (params.use_half_res != 0u) {
+                ssr_screen_size_i /= 2;
+        }
+        if (ssr_screen_size_i.x == 0 || ssr_screen_size_i.y == 0) {
+                return;
+        }
+        vec2 ssr_screen_size = vec2(ssr_screen_size_i);
+        vec2 ssr_pixel_size = vec2(1.0) / ssr_screen_size;
+        vec2 ssr_scale_inv = vec2(full_screen_size_i) / ssr_screen_size;
 
-	vec2 pixel_size = 1.0 / vec2(params.screen_size);
-	vec2 uv = vec2(ssC.xy) * pixel_size;
+        if (any(greaterThanEqual(ssC.xy, ssr_screen_size_i))) { //too large, do nothing
+                return;
+        }
 
-	uv += pixel_size * 0.5;
+        float base_depth = imageLoad(source_depth, ssC).r;
 
-	float base_depth = imageLoad(source_depth, ssC).r;
+        // World space point being shaded
+        vec2 screen_pos = vec2(ssC.xy) * ssr_scale_inv + vec2(0.5);
+        vec3 vertex = reconstructCSPosition(screen_pos, base_depth);
 
-	// World space point being shaded
-	vec3 vertex = reconstructCSPosition(uv * vec2(params.screen_size), base_depth);
-
-	vec4 normal_roughness = imageLoad(source_normal_roughness, ssC);
+        vec4 normal_roughness = imageLoad(source_normal_roughness, ssC);
 	vec3 normal = normalize(normal_roughness.xyz * 2.0 - 1.0);
 	float roughness = normal_roughness.w;
 	if (roughness > 0.5) {
@@ -87,11 +95,11 @@ void main() {
 	normal.y = -normal.y; //because this code reads flipped
 
 	vec3 view_dir;
-	if (sc_multiview) {
-		view_dir = normalize(vertex + scene_data.eye_offset[params.view_index].xyz);
-	} else {
-		view_dir = params.orthogonal ? vec3(0.0, 0.0, -1.0) : normalize(vertex);
-	}
+        if (sc_multiview) {
+                view_dir = normalize(vertex + scene_data.eye_offset[params.view_index].xyz);
+        } else {
+                view_dir = params.orthogonal != 0u ? vec3(0.0, 0.0, -1.0) : normalize(vertex);
+        }
 	vec3 ray_dir = normalize(reflect(view_dir, normal));
 
 	if (dot(ray_dir, normal) < 0.001) {
@@ -118,8 +126,8 @@ void main() {
 	float z_begin = vertex.z * w_begin;
 	float z_end = ray_end.z * w_end;
 
-	vec2 line_begin = vp_line_begin / pixel_size;
-	vec2 line_dir = vp_line_dir / pixel_size;
+        vec2 line_begin = vp_line_begin / ssr_pixel_size;
+        vec2 line_dir = vp_line_dir / ssr_pixel_size;
 	float z_dir = z_end - z_begin;
 	float w_dir = w_end - w_begin;
 
@@ -209,17 +217,17 @@ void main() {
 		float margin_blend = 1.0;
 		vec2 final_pos = pos;
 
-		vec2 margin = vec2((params.screen_size.x + params.screen_size.y) * 0.05); // make a uniform margin
-		if (any(bvec4(lessThan(pos, vec2(0.0, 0.0)), greaterThan(pos, params.screen_size)))) {
-			// clip at the screen edges
-			imageStore(ssr_image, ssC, vec4(0.0));
-			return;
-		}
+                vec2 margin = vec2((ssr_screen_size.x + ssr_screen_size.y) * 0.05); // make a uniform margin
+                if (any(bvec4(lessThan(pos, vec2(0.0, 0.0)), greaterThan(pos, ssr_screen_size)))) {
+                        // clip at the screen edges
+                        imageStore(ssr_image, ssC, vec4(0.0));
+                        return;
+                }
 
-		{
-			//blend fading out towards inner margin
-			// 0.5 = midpoint of reflection
-			vec2 margin_grad = mix(params.screen_size - pos, pos, lessThan(pos, params.screen_size * 0.5));
+                {
+                        //blend fading out towards inner margin
+                        // 0.5 = midpoint of reflection
+                        vec2 margin_grad = mix(ssr_screen_size - pos, pos, lessThan(pos, ssr_screen_size * 0.5));
 			margin_blend = smoothstep(0.0, margin.x * margin.y, margin_grad.x * margin_grad.y);
 			//margin_blend = 1.0;
 		}
@@ -240,7 +248,10 @@ void main() {
 		float roughness_fade = smoothstep(0.4, 0.7, 1.0 - roughness);
 
 		// Schlick term.
-		float metallic = texelFetch(source_metallic, ssC << 1, 0).w;
+                ivec2 metallic_coords = ivec2(vec2(ssC) * ssr_scale_inv);
+                ivec2 full_max = full_screen_size_i - ivec2(1);
+                metallic_coords = clamp(metallic_coords, ivec2(0), full_max);
+                float metallic = texelFetch(source_metallic, metallic_coords, 0).w;
 
 		// F0 is the reflectance of normally incident light (perpendicular to the surface).
 		// Dielectric materials have a widely accepted default value of 0.04. We assume that metals reflect all light, so their F0 is 1.0.
