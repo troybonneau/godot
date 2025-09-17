@@ -333,9 +333,10 @@ void RendererViewport::_draw_viewport(Viewport *p_viewport) {
 	/* Camera should always be BEFORE any other 3D */
 
 	bool can_draw_2d = !p_viewport->disable_2d && p_viewport->view_count == 1; // Stereo rendering does not support 2D, no depth data
-	bool scenario_draw_canvas_bg = false; //draw canvas, or some layer of it, as BG for 3D instead of in front
-	int scenario_canvas_max_layer = 0;
-	bool force_clear_render_target = false;
+        bool scenario_draw_canvas_bg = false; //draw canvas, or some layer of it, as BG for 3D instead of in front
+        int scenario_canvas_max_layer = 0;
+        bool force_clear_render_target = false;
+        bool rendered_2d = false;
 
 	for (int i = 0; i < RS::VIEWPORT_RENDER_INFO_TYPE_MAX; i++) {
 		for (int j = 0; j < RS::VIEWPORT_RENDER_INFO_MAX; j++) {
@@ -662,7 +663,7 @@ void RendererViewport::_draw_viewport(Viewport *p_viewport) {
 			Transform2D xform = _canvas_get_transform(p_viewport, canvas, E.value, clip_rect.size);
 
 			RendererCanvasRender::Light *canvas_lights = nullptr;
-			RendererCanvasRender::Light *canvas_directional_lights = nullptr;
+                        RendererCanvasRender::Light *canvas_directional_lights = nullptr;
 
 			RendererCanvasRender::Light *ptr = lights;
 			while (ptr) {
@@ -682,7 +683,8 @@ void RendererViewport::_draw_viewport(Viewport *p_viewport) {
 				ptr = ptr->filter_next_ptr;
 			}
 
-			RSG::canvas->render_canvas(p_viewport->render_target, canvas, xform, canvas_lights, canvas_directional_lights, clip_rect, p_viewport->texture_filter, p_viewport->texture_repeat, p_viewport->snap_2d_transforms_to_pixel, p_viewport->snap_2d_vertices_to_pixel, p_viewport->canvas_cull_mask, &p_viewport->render_info);
+                        RSG::canvas->render_canvas(p_viewport->render_target, canvas, xform, canvas_lights, canvas_directional_lights, clip_rect, p_viewport->texture_filter, p_viewport->texture_repeat, p_viewport->snap_2d_transforms_to_pixel, p_viewport->snap_2d_vertices_to_pixel, p_viewport->canvas_cull_mask, &p_viewport->render_info);
+                        rendered_2d = true;
 			if (RSG::canvas->was_sdf_used()) {
 				p_viewport->sdf_active = true;
 			}
@@ -718,10 +720,12 @@ void RendererViewport::_draw_viewport(Viewport *p_viewport) {
 		RSG::texture_storage->render_target_do_clear_request(p_viewport->render_target);
 	}
 
-	if (RSG::texture_storage->render_target_get_msaa_needs_resolve(p_viewport->render_target)) {
-		WARN_PRINT_ONCE("2D MSAA is enabled while there is no 2D content. Disable 2D MSAA for better performance.");
-		RSG::texture_storage->render_target_do_msaa_resolve(p_viewport->render_target);
-	}
+        if (RSG::texture_storage->render_target_get_msaa_needs_resolve(p_viewport->render_target)) {
+                if (!rendered_2d) {
+                        WARN_PRINT_ONCE("2D MSAA is enabled while there is no 2D content. Disable 2D MSAA for better performance.");
+                }
+                RSG::texture_storage->render_target_do_msaa_resolve(p_viewport->render_target);
+        }
 
 	if (p_viewport->measure_render_time) {
 		String rt_id = "vp_end_" + itos(p_viewport->self.get_id());

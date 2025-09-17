@@ -344,10 +344,15 @@ struct RenderTarget {
 	GLuint fbo = 0;
 	GLuint color = 0;
 	GLuint depth = 0;
-	GLuint backbuffer_fbo = 0;
-	GLuint backbuffer = 0;
-	GLuint backbuffer_depth = 0;
-	bool depth_has_stencil = true;
+        GLuint backbuffer_fbo = 0;
+        GLuint backbuffer = 0;
+        GLuint backbuffer_depth = 0;
+        GLuint msaa_fbo = 0;
+        GLuint msaa_color = 0;
+        GLuint msaa_depth = 0;
+        GLsizei msaa_samples = 1;
+        bool msaa_needs_resolve = false;
+        bool depth_has_stencil = true;
 
 	bool hdr = false; // For Compatibility this effects both 2D and 3D rendering!
 	GLuint color_internal_format = GL_RGBA8;
@@ -456,9 +461,12 @@ private:
 	void _clear_render_target(RenderTarget *rt);
 	void _update_render_target(RenderTarget *rt);
 	void _create_render_target_backbuffer(RenderTarget *rt);
-	void _render_target_allocate_sdf(RenderTarget *rt);
-	void _render_target_clear_sdf(RenderTarget *rt);
-	Rect2i _render_target_get_sdf_rect(const RenderTarget *rt) const;
+        void _render_target_allocate_sdf(RenderTarget *rt);
+        void _render_target_clear_sdf(RenderTarget *rt);
+        void _clear_render_target_msaa(RenderTarget *rt);
+        bool _create_render_target_msaa(RenderTarget *rt, GLsizei p_samples);
+        void _resolve_render_target_msaa(RenderTarget *rt);
+        Rect2i _render_target_get_sdf_rect(const RenderTarget *rt) const;
 
 	void _texture_set_data(RID p_texture, const Ref<Image> &p_image, int p_layer, bool p_initialize);
 	void _texture_set_3d_data(RID p_texture, const Vector<Ref<Image>> &p_data, bool p_initialize);
@@ -642,9 +650,9 @@ public:
 	void render_target_clear_used(RID p_render_target);
 	virtual void render_target_set_msaa(RID p_render_target, RS::ViewportMSAA p_msaa) override;
 	virtual RS::ViewportMSAA render_target_get_msaa(RID p_render_target) const override;
-	virtual void render_target_set_msaa_needs_resolve(RID p_render_target, bool p_needs_resolve) override {}
-	virtual bool render_target_get_msaa_needs_resolve(RID p_render_target) const override { return false; }
-	virtual void render_target_do_msaa_resolve(RID p_render_target) override {}
+        virtual void render_target_set_msaa_needs_resolve(RID p_render_target, bool p_needs_resolve) override;
+        virtual bool render_target_get_msaa_needs_resolve(RID p_render_target) const override;
+        virtual void render_target_do_msaa_resolve(RID p_render_target) override;
 	virtual void render_target_set_use_hdr(RID p_render_target, bool p_use_hdr_2d) override;
 	virtual bool render_target_is_using_hdr(RID p_render_target) const override;
 	virtual void render_target_set_use_debanding(RID p_render_target, bool p_use_debanding) override {}
