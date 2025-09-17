@@ -2203,44 +2203,72 @@ void RasterizerCanvasGLES3::update() {
 }
 
 void RasterizerCanvasGLES3::canvas_begin(RID p_to_render_target, bool p_to_backbuffer, bool p_backbuffer_has_mipmaps) {
-	GLES3::TextureStorage *texture_storage = GLES3::TextureStorage::get_singleton();
-	GLES3::Config *config = GLES3::Config::get_singleton();
+        GLES3::TextureStorage *texture_storage = GLES3::TextureStorage::get_singleton();
+        GLES3::Config *config = GLES3::Config::get_singleton();
 
-	GLES3::RenderTarget *render_target = texture_storage->get_render_target(p_to_render_target);
+        GLES3::RenderTarget *render_target = texture_storage->get_render_target(p_to_render_target);
 
-	if (p_to_backbuffer) {
-		glBindFramebuffer(GL_FRAMEBUFFER, render_target->backbuffer_fbo);
-		glActiveTexture(GL_TEXTURE0 + config->max_texture_image_units - 4);
-		GLES3::Texture *tex = texture_storage->get_texture(texture_storage->texture_gl_get_default(GLES3::DEFAULT_GL_TEXTURE_WHITE));
-		glBindTexture(GL_TEXTURE_2D, tex->tex_id);
-	} else {
-		glBindFramebuffer(GL_FRAMEBUFFER, render_target->fbo);
-		glActiveTexture(GL_TEXTURE0 + config->max_texture_image_units - 4);
-		glBindTexture(GL_TEXTURE_2D, render_target->backbuffer);
-		if (render_target->backbuffer != 0) {
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, p_backbuffer_has_mipmaps ? render_target->mipmap_count - 1 : 0);
-		}
-	}
+        GLuint target_fbo = 0;
+        bool using_msaa = false;
 
-	if (render_target->is_transparent || p_to_backbuffer) {
-		state.transparent_render_target = true;
-		glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-	} else {
+        if (!p_to_backbuffer && render_target->msaa_fbo != 0) {
+                using_msaa = true;
+                if (!render_target->msaa_needs_resolve && !render_target->clear_requested && render_target->size.x > 0 && render_target->size.y > 0) {
+                        glBindFramebuffer(GL_READ_FRAMEBUFFER, render_target->fbo);
+                        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, render_target->msaa_fbo);
+                        glBlitFramebuffer(0, 0, render_target->size.x, render_target->size.y,
+                                        0, 0, render_target->size.x, render_target->size.y,
+                                        GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                }
+                target_fbo = render_target->msaa_fbo;
+        } else if (p_to_backbuffer) {
+                target_fbo = render_target->backbuffer_fbo;
+        } else {
+                target_fbo = render_target->fbo;
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, target_fbo);
+
+        if (using_msaa) {
+                glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+                texture_storage->render_target_set_msaa_needs_resolve(p_to_render_target, true);
+        }
+
+        if (render_target->is_transparent || p_to_backbuffer) {
+                state.transparent_render_target = true;
+                glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        } else {
 		state.transparent_render_target = false;
 		glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
 	}
 
-	if (render_target && render_target->clear_requested) {
-		const Color &col = render_target->clear_color;
-		glClearColor(col.r, col.g, col.b, render_target->is_transparent ? col.a : 1.0f);
+        if (!using_msaa && !p_to_backbuffer) {
+                texture_storage->render_target_set_msaa_needs_resolve(p_to_render_target, false);
+        }
 
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-		render_target->clear_requested = false;
-	}
+        if (render_target && render_target->clear_requested) {
+                const Color &col = render_target->clear_color;
+                glClearColor(col.r, col.g, col.b, render_target->is_transparent ? col.a : 1.0f);
 
-	glActiveTexture(GL_TEXTURE0);
-	GLES3::Texture *tex = texture_storage->get_texture(texture_storage->texture_gl_get_default(GLES3::DEFAULT_GL_TEXTURE_WHITE));
-	glBindTexture(GL_TEXTURE_2D, tex->tex_id);
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+                render_target->clear_requested = false;
+        }
+
+        if (p_to_backbuffer) {
+                glActiveTexture(GL_TEXTURE0 + config->max_texture_image_units - 4);
+                GLES3::Texture *tex = texture_storage->get_texture(texture_storage->texture_gl_get_default(GLES3::DEFAULT_GL_TEXTURE_WHITE));
+                glBindTexture(GL_TEXTURE_2D, tex->tex_id);
+        } else {
+                glActiveTexture(GL_TEXTURE0 + config->max_texture_image_units - 4);
+                glBindTexture(GL_TEXTURE_2D, render_target->backbuffer);
+                if (render_target->backbuffer != 0) {
+                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, p_backbuffer_has_mipmaps ? render_target->mipmap_count - 1 : 0);
+                }
+        }
+
+        glActiveTexture(GL_TEXTURE0);
+        GLES3::Texture *tex = texture_storage->get_texture(texture_storage->texture_gl_get_default(GLES3::DEFAULT_GL_TEXTURE_WHITE));
+        glBindTexture(GL_TEXTURE_2D, tex->tex_id);
 }
 
 void RasterizerCanvasGLES3::_bind_canvas_texture(RID p_texture, RS::CanvasItemTextureFilter p_base_filter, RS::CanvasItemTextureRepeat p_base_repeat) {

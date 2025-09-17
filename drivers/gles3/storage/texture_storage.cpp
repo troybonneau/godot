@@ -36,6 +36,7 @@
 #include "../rasterizer_gles3.h"
 #include "config.h"
 #include "utilities.h"
+#include <cstdint>
 
 #ifdef ANDROID_ENABLED
 #define glFramebufferTextureMultiviewOVR GLES3::Config::get_singleton()->eglFramebufferTextureMultiviewOVR
@@ -2101,12 +2102,15 @@ void TextureStorage::_update_render_target(RenderTarget *rt) {
 	}
 
 	// do not allocate a render target that is attached to the screen
-	if (rt->direct_to_screen) {
-		rt->fbo = system_fbo;
-		return;
-	}
+        if (rt->direct_to_screen) {
+                rt->fbo = system_fbo;
+                _clear_render_target_msaa(rt);
+                return;
+        }
 
-	Config *config = Config::get_singleton();
+        _clear_render_target_msaa(rt);
+
+        Config *config = Config::get_singleton();
 
 	if (rt->hdr) {
 		rt->color_internal_format = GL_RGBA16F;
@@ -2215,11 +2219,11 @@ void TextureStorage::_update_render_target(RenderTarget *rt) {
 		}
 
 		GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-		if (status != GL_FRAMEBUFFER_COMPLETE) {
-			glDeleteFramebuffers(1, &rt->fbo);
-			if (rt->overridden.color.is_null()) {
-				GLES3::Utilities::get_singleton()->texture_free_data(rt->color);
-			}
+                if (status != GL_FRAMEBUFFER_COMPLETE) {
+                        glDeleteFramebuffers(1, &rt->fbo);
+                        if (rt->overridden.color.is_null()) {
+                                GLES3::Utilities::get_singleton()->texture_free_data(rt->color);
+                        }
 			if (rt->overridden.depth.is_null()) {
 				GLES3::Utilities::get_singleton()->texture_free_data(rt->depth);
 			}
@@ -2258,12 +2262,45 @@ void TextureStorage::_update_render_target(RenderTarget *rt) {
 			texture->height = rt->size.y;
 			texture->alloc_height = rt->size.y;
 			texture->active = true;
-		}
-	}
+                }
+        }
 
-	glClearColor(0, 0, 0, 0);
-	glClear(GL_COLOR_BUFFER_BIT);
-	glBindFramebuffer(GL_FRAMEBUFFER, system_fbo);
+        if (rt->msaa != RS::VIEWPORT_MSAA_DISABLED) {
+                bool can_use_msaa = true;
+                if (rt->view_count > 1) {
+                        WARN_PRINT_ONCE("2D MSAA is not supported for multiview on the Compatibility renderer.");
+                        can_use_msaa = false;
+                } else if (!config->msaa_supported || config->msaa_max_samples < 2) {
+                        WARN_PRINT_ONCE("MSAA is not supported on this device.");
+                        can_use_msaa = false;
+                }
+
+                if (can_use_msaa) {
+                        static const GLsizei msaa_samples[RS::VIEWPORT_MSAA_MAX] = { 1, 2, 4, 8 };
+                        GLsizei samples = msaa_samples[rt->msaa];
+                        if (config->msaa_max_samples > 0 && samples > config->msaa_max_samples) {
+                                samples = config->msaa_max_samples;
+                        }
+
+                        if (samples > 1) {
+                                if (!_create_render_target_msaa(rt, samples)) {
+                                        can_use_msaa = false;
+                                }
+                        } else {
+                                can_use_msaa = false;
+                        }
+                }
+
+                if (!can_use_msaa) {
+                        rt->msaa = RS::VIEWPORT_MSAA_DISABLED;
+                }
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, rt->fbo);
+
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glBindFramebuffer(GL_FRAMEBUFFER, system_fbo);
 }
 
 void TextureStorage::_create_render_target_backbuffer(RenderTarget *rt) {
@@ -2401,13 +2438,106 @@ void GLES3::TextureStorage::check_backbuffer(RenderTarget *rt, const bool uses_s
 		}
 	}
 }
-void TextureStorage::_clear_render_target(RenderTarget *rt) {
-	// there is nothing else to clear when DIRECT_TO_SCREEN is used
-	if (rt->direct_to_screen) {
-		return;
-	}
+void TextureStorage::_clear_render_target_msaa(RenderTarget *rt) {
+        if (rt->msaa_fbo != 0) {
+                glDeleteFramebuffers(1, &rt->msaa_fbo);
+                rt->msaa_fbo = 0;
+        }
 
-	// Dispose of the cached fbo's and the allocated textures
+        if (rt->msaa_color != 0) {
+                GLES3::Utilities::get_singleton()->render_buffer_free_data(rt->msaa_color);
+                rt->msaa_color = 0;
+        }
+
+        if (rt->msaa_depth != 0) {
+                GLES3::Utilities::get_singleton()->render_buffer_free_data(rt->msaa_depth);
+                rt->msaa_depth = 0;
+        }
+
+        rt->msaa_samples = 1;
+        rt->msaa_needs_resolve = false;
+}
+
+bool TextureStorage::_create_render_target_msaa(RenderTarget *rt, GLsizei p_samples) {
+        ERR_FAIL_NULL_V(rt, false);
+
+        _clear_render_target_msaa(rt);
+
+        if (p_samples <= 1 || rt->size.x <= 0 || rt->size.y <= 0) {
+                return false;
+        }
+
+        bool success = true;
+
+        glGenFramebuffers(1, &rt->msaa_fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, rt->msaa_fbo);
+
+        glGenRenderbuffers(1, &rt->msaa_color);
+        glBindRenderbuffer(GL_RENDERBUFFER, rt->msaa_color);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, p_samples, rt->color_internal_format, rt->size.x, rt->size.y);
+        uint64_t color_size_64 = uint64_t(rt->size.x) * uint64_t(rt->size.y) * uint64_t(p_samples) * uint64_t(rt->color_format_size);
+        uint32_t color_size = color_size_64 > UINT32_MAX ? UINT32_MAX : uint32_t(color_size_64);
+        GLES3::Utilities::get_singleton()->render_buffer_allocated_data(rt->msaa_color, color_size, "Render target 2D MSAA color buffer");
+
+        glGenRenderbuffers(1, &rt->msaa_depth);
+        glBindRenderbuffer(GL_RENDERBUFFER, rt->msaa_depth);
+        GLenum depth_format = rt->depth_has_stencil ? GL_DEPTH24_STENCIL8 : GL_DEPTH_COMPONENT24;
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, p_samples, depth_format, rt->size.x, rt->size.y);
+        uint64_t depth_size_64 = uint64_t(rt->size.x) * uint64_t(rt->size.y) * uint64_t(p_samples) * 4;
+        uint32_t depth_size = depth_size_64 > UINT32_MAX ? UINT32_MAX : uint32_t(depth_size_64);
+        GLES3::Utilities::get_singleton()->render_buffer_allocated_data(rt->msaa_depth, depth_size, "Render target 2D MSAA depth buffer");
+
+        GLenum depth_attachment = rt->depth_has_stencil ? GL_DEPTH_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT;
+
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rt->msaa_color);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, depth_attachment, GL_RENDERBUFFER, rt->msaa_depth);
+
+        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+                WARN_PRINT("Could not create 2D MSAA framebuffer, status: " + get_framebuffer_error(status));
+                success = false;
+        } else {
+                rt->msaa_samples = p_samples;
+                rt->msaa_needs_resolve = false;
+        }
+
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, system_fbo);
+
+        if (!success) {
+                _clear_render_target_msaa(rt);
+        }
+
+        return success;
+}
+
+void TextureStorage::_resolve_render_target_msaa(RenderTarget *rt) {
+        ERR_FAIL_NULL(rt);
+
+        if (rt->msaa_fbo == 0 || !rt->msaa_needs_resolve) {
+                return;
+        }
+
+        if (rt->size.x <= 0 || rt->size.y <= 0) {
+                rt->msaa_needs_resolve = false;
+                return;
+        }
+
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, rt->msaa_fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rt->fbo);
+        glBlitFramebuffer(0, 0, rt->size.x, rt->size.y, 0, 0, rt->size.x, rt->size.y, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, system_fbo);
+
+        rt->msaa_needs_resolve = false;
+}
+
+void TextureStorage::_clear_render_target(RenderTarget *rt) {
+        // there is nothing else to clear when DIRECT_TO_SCREEN is used
+        if (rt->direct_to_screen) {
+                return;
+        }
+
+        // Dispose of the cached fbo's and the allocated textures
 	for (KeyValue<uint32_t, RenderTarget::RTOverridden::FBOCacheEntry> &E : rt->overridden.fbo_cache) {
 		glDeleteTextures(E.value.allocated_textures.size(), E.value.allocated_textures.ptr());
 		// Don't delete the current FBO, we'll do that a couple lines down.
@@ -2417,10 +2547,12 @@ void TextureStorage::_clear_render_target(RenderTarget *rt) {
 	}
 	rt->overridden.fbo_cache.clear();
 
-	if (rt->fbo) {
-		glDeleteFramebuffers(1, &rt->fbo);
-		rt->fbo = 0;
-	}
+        _clear_render_target_msaa(rt);
+
+        if (rt->fbo) {
+                glDeleteFramebuffers(1, &rt->fbo);
+                rt->fbo = 0;
+        }
 
 	if (rt->overridden.color.is_null()) {
 		if (rt->texture.is_valid()) {
@@ -2713,25 +2845,49 @@ void TextureStorage::render_target_clear_used(RID p_render_target) {
 }
 
 void TextureStorage::render_target_set_msaa(RID p_render_target, RS::ViewportMSAA p_msaa) {
-	RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
-	ERR_FAIL_NULL(rt);
-	ERR_FAIL_COND(rt->direct_to_screen);
-	if (p_msaa == rt->msaa) {
-		return;
-	}
+        RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
+        ERR_FAIL_NULL(rt);
+        ERR_FAIL_COND(rt->direct_to_screen);
+        if (p_msaa == rt->msaa) {
+                return;
+        }
 
-	WARN_PRINT("2D MSAA is not yet supported for GLES3.");
-
-	_clear_render_target(rt);
-	rt->msaa = p_msaa;
-	_update_render_target(rt);
+        _clear_render_target(rt);
+        rt->msaa = p_msaa;
+        _update_render_target(rt);
 }
 
 RS::ViewportMSAA TextureStorage::render_target_get_msaa(RID p_render_target) const {
-	RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
-	ERR_FAIL_NULL_V(rt, RS::VIEWPORT_MSAA_DISABLED);
+        RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
+        ERR_FAIL_NULL_V(rt, RS::VIEWPORT_MSAA_DISABLED);
 
-	return rt->msaa;
+        return rt->msaa;
+}
+
+void TextureStorage::render_target_set_msaa_needs_resolve(RID p_render_target, bool p_needs_resolve) {
+        RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
+        ERR_FAIL_NULL(rt);
+
+        if (rt->msaa_fbo == 0) {
+                rt->msaa_needs_resolve = false;
+                return;
+        }
+
+        rt->msaa_needs_resolve = p_needs_resolve;
+}
+
+bool TextureStorage::render_target_get_msaa_needs_resolve(RID p_render_target) const {
+        RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
+        ERR_FAIL_NULL_V(rt, false);
+
+        return rt->msaa_fbo != 0 && rt->msaa_needs_resolve;
+}
+
+void TextureStorage::render_target_do_msaa_resolve(RID p_render_target) {
+        RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
+        ERR_FAIL_NULL(rt);
+
+        _resolve_render_target_msaa(rt);
 }
 
 void TextureStorage::render_target_set_use_hdr(RID p_render_target, bool p_use_hdr_2d) {
@@ -2807,16 +2963,27 @@ void TextureStorage::render_target_disable_clear_request(RID p_render_target) {
 }
 
 void TextureStorage::render_target_do_clear_request(RID p_render_target) {
-	RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
-	ERR_FAIL_NULL(rt);
-	if (!rt->clear_requested) {
-		return;
-	}
-	glBindFramebuffer(GL_FRAMEBUFFER, rt->fbo);
+        RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
+        ERR_FAIL_NULL(rt);
+        if (!rt->clear_requested) {
+                return;
+        }
+        Color color = rt->clear_color;
+        if (!rt->is_transparent) {
+                color.a = 1.0f;
+        }
 
-	glClearBufferfv(GL_COLOR, 0, rt->clear_color.components);
-	rt->clear_requested = false;
-	glBindFramebuffer(GL_FRAMEBUFFER, system_fbo);
+        if (rt->msaa_fbo != 0) {
+                glBindFramebuffer(GL_FRAMEBUFFER, rt->msaa_fbo);
+                glClearBufferfv(GL_COLOR, 0, color.components);
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, rt->fbo);
+        glClearBufferfv(GL_COLOR, 0, color.components);
+
+        rt->clear_requested = false;
+        rt->msaa_needs_resolve = false;
+        glBindFramebuffer(GL_FRAMEBUFFER, system_fbo);
 }
 
 GLuint TextureStorage::render_target_get_fbo(RID p_render_target) const {
@@ -3164,15 +3331,19 @@ void TextureStorage::render_target_sdf_process(RID p_render_target) {
 }
 
 void TextureStorage::render_target_copy_to_back_buffer(RID p_render_target, const Rect2i &p_region, bool p_gen_mipmaps) {
-	RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
-	ERR_FAIL_NULL(rt);
-	ERR_FAIL_COND(rt->direct_to_screen);
+        RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
+        ERR_FAIL_NULL(rt);
+        ERR_FAIL_COND(rt->direct_to_screen);
 
-	if (rt->backbuffer_fbo == 0) {
-		_create_render_target_backbuffer(rt);
-	}
+        if (rt->msaa_fbo != 0 && rt->msaa_needs_resolve) {
+                _resolve_render_target_msaa(rt);
+        }
 
-	Rect2i region;
+        if (rt->backbuffer_fbo == 0) {
+                _create_render_target_backbuffer(rt);
+        }
+
+        Rect2i region;
 	if (p_region == Rect2i()) {
 		region.size = rt->size;
 	} else {
