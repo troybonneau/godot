@@ -42,8 +42,8 @@ layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE, local_size_z = 1) i
 
 layout(set = 0, binding = 0) uniform sampler2D color_buffer;
 layout(set = 0, binding = 1) uniform sampler2D depth_buffer;
-layout(rg16f, set = 0, binding = 2) uniform restrict readonly image2D velocity_buffer;
-layout(rg16f, set = 0, binding = 3) uniform restrict readonly image2D last_velocity_buffer;
+layout(set = 0, binding = 2) uniform sampler2D velocity_buffer;
+layout(set = 0, binding = 3) uniform sampler2D last_velocity_buffer;
 layout(set = 0, binding = 4) uniform sampler2D history_buffer;
 layout(rgba16f, set = 0, binding = 5) uniform restrict writeonly image2D output_buffer;
 
@@ -164,7 +164,7 @@ void get_closest_pixel_velocity_3x3(in uvec2 group_pos, uvec2 group_top_left, ou
 	depth_test_min(group_pos + kOffsets3x3[8], min_depth, min_pos);
 
 	// Velocity out
-	velocity = imageLoad(velocity_buffer, ivec2(group_top_left + min_pos)).xy;
+	velocity = texelFetch(velocity_buffer, ivec2(group_top_left + min_pos), 0).xy;
 }
 
 /*------------------------------------------------------------------------------
@@ -300,7 +300,7 @@ float luminance(vec3 color) {
 // This is "velocity disocclusion" as described by https://www.elopezr.com/temporal-aa-and-the-quest-for-the-holy-trail/.
 // We use texel space, so our scale and threshold differ.
 float get_factor_disocclusion(vec2 uv_reprojected, vec2 velocity) {
-	vec2 velocity_previous = imageLoad(last_velocity_buffer, ivec2(uv_reprojected * params.resolution)).xy;
+	vec2 velocity_previous = texelFetch(last_velocity_buffer, ivec2(uv_reprojected * params.resolution), 0).xy;
 	vec2 velocity_texels = velocity * params.resolution;
 	vec2 prev_velocity_texels = velocity_previous * params.resolution;
 	float disocclusion = length(prev_velocity_texels - velocity_texels) - params.disocclusion_threshold;
@@ -309,7 +309,7 @@ float get_factor_disocclusion(vec2 uv_reprojected, vec2 velocity) {
 
 vec3 temporal_antialiasing(uvec2 pos_group_top_left, uvec2 pos_group, uvec2 pos_screen, vec2 uv, sampler2D tex_history) {
 	// Get the velocity of the current pixel
-	vec2 velocity = imageLoad(velocity_buffer, ivec2(pos_screen)).xy;
+	vec2 velocity = texelFetch(velocity_buffer, ivec2(pos_screen), 0).xy;
 
 	// Get reprojected uv
 	vec2 uv_reprojected = uv + velocity;
