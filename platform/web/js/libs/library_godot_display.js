@@ -333,9 +333,10 @@ mergeInto(LibraryManager.library, GodotDisplayScreen);
  * Exposes all the functions needed by DisplayServer implementation.
  */
 const GodotDisplay = {
-	$GodotDisplay__deps: ['$GodotConfig', '$GodotRuntime', '$GodotDisplayCursor', '$GodotEventListeners', '$GodotDisplayScreen', '$GodotDisplayVK'],
-	$GodotDisplay: {
-		window_icon: '',
+        $GodotDisplay__deps: ['$GodotConfig', '$GodotRuntime', '$GodotDisplayCursor', '$GodotEventListeners', '$GodotDisplayScreen', '$GodotDisplayVK'],
+        $GodotDisplay: {
+                window_icon: '',
+                clipboard_ptr: 0,
 		getDPI: function () {
 			// devicePixelRatio is given in dppx
 			// https://drafts.csswg.org/css-values/#resolution
@@ -563,22 +564,32 @@ const GodotDisplay = {
 		return 0;
 	},
 
-	godot_js_display_clipboard_get__proxy: 'sync',
-	godot_js_display_clipboard_get__sig: 'ii',
-	godot_js_display_clipboard_get: function (callback) {
-		const func = GodotRuntime.get_func(callback);
-		try {
-			navigator.clipboard.readText().then(function (result) {
-				const ptr = GodotRuntime.allocString(result);
-				func(ptr);
-				GodotRuntime.free(ptr);
-			}).catch(function (e) {
-				// Fail graciously.
-			});
-		} catch (e) {
-			// Fail graciously.
-		}
-	},
+        godot_js_display_clipboard_get__proxy: 'async',
+        godot_js_display_clipboard_get__sig: 'i',
+        godot_js_display_clipboard_get: function () {
+                if (!navigator.clipboard || !navigator.clipboard.readText) {
+                        return 0;
+                }
+                return Asyncify.handleAsync(function () {
+                        return navigator.clipboard.readText().then(function (result) {
+                                if (GodotDisplay.clipboard_ptr) {
+                                        GodotRuntime.free(GodotDisplay.clipboard_ptr);
+                                        GodotDisplay.clipboard_ptr = 0;
+                                }
+                                if (typeof result !== 'string') {
+                                        result = '';
+                                }
+                                GodotDisplay.clipboard_ptr = GodotRuntime.allocString(result);
+                                return GodotDisplay.clipboard_ptr;
+                        }).catch(function () {
+                                if (GodotDisplay.clipboard_ptr) {
+                                        GodotRuntime.free(GodotDisplay.clipboard_ptr);
+                                        GodotDisplay.clipboard_ptr = 0;
+                                }
+                                return 0;
+                        });
+                });
+        },
 
 	/*
 	 * Window
