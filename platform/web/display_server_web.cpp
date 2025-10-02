@@ -1026,7 +1026,12 @@ void DisplayServerWeb::clipboard_set(const String &p_text) {
 }
 
 String DisplayServerWeb::clipboard_get() const {
-	godot_js_display_clipboard_get(update_clipboard_callback);
+	char *text_ptr = godot_js_display_clipboard_get();
+	if (text_ptr) {
+		String text = String::utf8(text_ptr);
+		godot_js_display_clipboard_free(text_ptr);
+		clipboard = text;
+	}
 	return clipboard;
 }
 

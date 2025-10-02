@@ -564,19 +564,28 @@ const GodotDisplay = {
 	},
 
 	godot_js_display_clipboard_get__proxy: 'sync',
-	godot_js_display_clipboard_get__sig: 'ii',
-	godot_js_display_clipboard_get: function (callback) {
-		const func = GodotRuntime.get_func(callback);
-		try {
+	godot_js_display_clipboard_get__sig: 'i',
+	godot_js_display_clipboard_get: function () {
+		if (!navigator.clipboard || typeof navigator.clipboard.readText !== 'function') {
+			return 0;
+		}
+		if (typeof Asyncify === 'undefined' || typeof Asyncify.handleSleep !== 'function') {
+			return 0;
+		}
+		return Asyncify.handleSleep(function (wakeUp) {
 			navigator.clipboard.readText().then(function (result) {
-				const ptr = GodotRuntime.allocString(result);
-				func(ptr);
-				GodotRuntime.free(ptr);
-			}).catch(function (e) {
-				// Fail graciously.
+				wakeUp(GodotRuntime.allocString(result));
+			}).catch(function () {
+				wakeUp(0);
 			});
-		} catch (e) {
-			// Fail graciously.
+		});
+	},
+
+	godot_js_display_clipboard_free__proxy: 'sync',
+	godot_js_display_clipboard_free__sig: 'vi',
+	godot_js_display_clipboard_free: function (p_ptr) {
+		if (p_ptr) {
+			GodotRuntime.free(p_ptr);
 		}
 	},
 

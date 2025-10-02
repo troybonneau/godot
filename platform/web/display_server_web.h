@@ -69,7 +69,7 @@ private:
 	Callable input_text_callback;
 	Callable drop_files_callback;
 
-	String clipboard;
+	mutable String clipboard;
 	Point2 touches[32];
 
 	Array voices;
