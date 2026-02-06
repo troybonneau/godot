@@ -40,6 +40,8 @@
 #include "core/os/main_loop.h"
 #include "servers/rendering/dummy/rasterizer_dummy.h"
 
+#include <cstdlib>
+
 #ifdef GLES3_ENABLED
 #include "drivers/gles3/rasterizer_gles3.h"
 #endif
@@ -1028,8 +1030,14 @@ void DisplayServerWeb::clipboard_set(const String &p_text) {
 }
 
 String DisplayServerWeb::clipboard_get() const {
-	godot_js_display_clipboard_get(update_clipboard_callback);
-	return clipboard;
+        char *text = godot_js_display_clipboard_get();
+        if (text) {
+                String out = String::utf8(text);
+                free(text);
+                clipboard = out;
+                return out;
+        }
+        return clipboard;
 }
 
 void DisplayServerWeb::send_window_event_callback(int p_notification) {
